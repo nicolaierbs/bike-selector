@@ -1,0 +1,38 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Serve webhook app (reload)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["bike_selector.app:app", "--reload", "--port", "8000"],
+      "envFile": "${workspaceFolder}/.env",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    },
+    {
+      "name": "CLI: train",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "bike_selector.cli",
+      "args": ["train"],
+      "envFile": "${workspaceFolder}/.env",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    },
+    {
+      "name": "CLI: predict activity",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "bike_selector.cli",
+      "args": ["predict", "${input:activityId}"],
+      "envFile": "${workspaceFolder}/.env",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    }
+  ],
+  "inputs": [
+    { "id": "activityId", "type": "promptString", "description": "Strava activity id" }
+  ]
+}
