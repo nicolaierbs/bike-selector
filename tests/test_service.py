@@ -32,21 +32,32 @@ PREDICTIONS_UNSURE = [
 def test_description_appended_below_existing_text(service):
     result = service.build_description("Lovely morning loop.", PREDICTIONS)
     assert result.startswith("Lovely morning loop.")
-    assert "Bike guess: Canyon Endurace 87% | Cube Nuroad 11% | Rose Commuter 2%" in result
+    assert "🥇 Canyon Endurace — 87%" in result
+    assert "🥈 Cube Nuroad — 11%" in result
+    assert "🥉 Rose Commuter — 2%" in result
+    assert "https://www.erbs.eu/bikeselector/" in result
+    assert result.count("[bike-selector]") == 2  # wraps the block, start and end
     assert result.endswith("[bike-selector]")
 
 
 def test_description_created_when_empty(service):
-    assert service.build_description(None, PREDICTIONS).startswith("Bike guess:")
-    assert service.build_description("", PREDICTIONS).startswith("Bike guess:")
+    assert service.build_description(None, PREDICTIONS).startswith("[bike-selector]")
+    assert "🚲 Bike guess" in service.build_description("", PREDICTIONS)
 
 
-def test_rerunning_replaces_the_old_line_instead_of_stacking(service):
+def test_rerunning_replaces_the_old_block_instead_of_stacking(service):
     first = service.build_description("Ride notes", PREDICTIONS)
     second = service.build_description(first, PREDICTIONS)
-    assert second.count("Bike guess:") == 1
-    assert second.count("[bike-selector]") == 1
+    assert second.count("🚲 Bike guess") == 1
+    assert second.count("[bike-selector]") == 2
     assert second.startswith("Ride notes")
+
+
+def test_legacy_single_line_format_is_replaced_not_stacked(service):
+    legacy = "Ride notes\n\nBike guess: Canyon Endurace 90% [bike-selector]"
+    result = service.build_description(legacy, PREDICTIONS)
+    assert "Bike guess: Canyon Endurace 90%" not in result
+    assert result.count("[bike-selector]") == 2
 
 
 def test_probability_count_is_configurable(service):
@@ -69,7 +80,7 @@ def test_updates_gear_and_description(service, gateway):
     assert len(gateway.updates) == 1
     update = gateway.updates[0]
     assert update["gear_id"] == outcome.chosen_gear_id
-    assert "Bike guess:" in update["description"]
+    assert "🚲 Bike guess" in update["description"]
     assert update["description"].startswith("Commute home")
 
 
@@ -137,7 +148,7 @@ def test_low_confidence_annotates_without_assigning(service, gateway, monkeypatc
 
     assert outcome.status == "updated"
     assert gateway.updates[0]["gear_id"] is None
-    assert "Bike guess:" in gateway.updates[0]["description"]
+    assert "🚲 Bike guess" in gateway.updates[0]["description"]
 
 
 def test_confident_prediction_does_assign(service, gateway, monkeypatch):

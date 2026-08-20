@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     skip_trainer: bool = False
     description_marker: str = "[bike-selector]"
     max_probabilities_shown: int = 3
+    info_url: str = "https://www.erbs.eu/bikeselector/"
 
     # --- Model ---
     training_activity_limit: int = 1000

@@ -94,22 +94,43 @@ class BikeSelectorService:
 
     # ----------------------------------------------------------- description
 
+    #: Rank markers for the description table; anything past a bronze medal
+    #: falls back to a plain ordinal.
+    _RANK_MARKERS: tuple[str, ...] = ("🥇", "🥈", "🥉")
+
     def build_description(self, existing: str | None, predictions: list[Prediction]) -> str:
-        """Append (or refresh) our probability line without touching the user's text."""
+        """Append (or refresh) our probability table without touching the user's text."""
         shown = predictions[: max(self.settings.max_probabilities_shown, 1)]
-        line = "Bike guess: " + " | ".join(p.format() for p in shown)
         marker = self.settings.description_marker
+
+        rows = []
+        for i, p in enumerate(shown):
+            rank = self._RANK_MARKERS[i] if i < len(self._RANK_MARKERS) else f"{i + 1}."
+            rows.append(f"{rank} {p.name} — {p.probability * 100:.0f}%")
+
+        lines = [marker] if marker else []
+        lines.append("🚲 Bike guess")
+        lines.extend(rows)
+        if self.settings.info_url:
+            lines.append(f"ℹ️ {self.settings.info_url}")
         if marker:
-            line = f"{line} {marker}"
+            lines.append(marker)
+        block = "\n".join(lines)
 
         body = (existing or "").rstrip()
         if marker:
-            pattern = re.compile(
-                rf"^.*{re.escape(marker)}\s*$", flags=re.MULTILINE
+            # Current (start/end marker) block, from any previous run of this code.
+            block_pattern = re.compile(
+                rf"^{re.escape(marker)}\n.*?\n{re.escape(marker)}\s*$",
+                flags=re.MULTILINE | re.DOTALL,
             )
-            body = pattern.sub("", body).rstrip()
+            body = block_pattern.sub("", body).rstrip()
+            # Legacy single-line format, in case this description predates the
+            # table view.
+            legacy_pattern = re.compile(rf"^.*{re.escape(marker)}\s*$", flags=re.MULTILINE)
+            body = legacy_pattern.sub("", body).rstrip()
 
-        return f"{body}\n\n{line}".lstrip() if body else line
+        return f"{body}\n\n{block}".lstrip() if body else block
 
     def _has_our_marker(self, description: str | None) -> bool:
         marker = self.settings.description_marker

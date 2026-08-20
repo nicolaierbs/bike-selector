@@ -10,6 +10,7 @@ strong signal about which bike was used.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from datetime import datetime, timedelta
 from typing import Any
@@ -22,6 +23,13 @@ NAN = float("nan")
 
 #: One-hot columns for sport type. Kept explicit so train/predict always align.
 SPORT_TYPE_VOCAB: tuple[str, ...] = BIKE_SPORT_TYPES
+
+#: Recording device (head unit) name, hashed into a handful of buckets rather
+#: than a per-user vocabulary. Not "which bike" by itself, but riders often
+#: pair one head unit with one bike, and it costs nothing extra: it is already
+#: present on the summary activity, unlike power-meter laterality (only on the
+#: activity's data streams, which would need one extra API call per ride).
+DEVICE_HASH_BUCKETS = 4
 
 BASE_FEATURES: tuple[str, ...] = (
     "distance_km",
@@ -60,10 +68,13 @@ BASE_FEATURES: tuple[str, ...] = (
     "achievement_count",
     "pr_count",
     "athlete_count",
+    "has_device_name",
 )
 
-FEATURE_NAMES: tuple[str, ...] = BASE_FEATURES + tuple(
-    f"sport_{name}" for name in SPORT_TYPE_VOCAB
+FEATURE_NAMES: tuple[str, ...] = (
+    BASE_FEATURES
+    + tuple(f"sport_{name}" for name in SPORT_TYPE_VOCAB)
+    + tuple(f"device_bucket_{i}" for i in range(DEVICE_HASH_BUCKETS))
 )
 
 
@@ -148,6 +159,18 @@ def is_bike_activity(activity: Any) -> bool:
     return sport_type_of(activity) in BIKE_SPORT_TYPES
 
 
+def _device_bucket(device_name: str, buckets: int = DEVICE_HASH_BUCKETS) -> int:
+    """Stable hash bucket for a recording-device name.
+
+    Deliberately not Python's built-in ``hash()``: that is salted per-process,
+    so a model trained in one process and used to predict in another (exactly
+    what happens here — train and predict run in different requests) would see
+    a different bucket for the same string and the feature would be noise.
+    """
+    digest = hashlib.md5(device_name.strip().lower().encode("utf-8")).digest()
+    return digest[0] % buckets
+
+
 # ----------------------------------------------------------------- extraction
 
 
@@ -219,6 +242,14 @@ def extract(activity: Any) -> dict[str, float]:
     sport = sport_type_of(activity)
     for name in SPORT_TYPE_VOCAB:
         features[f"sport_{name}"] = 1.0 if sport == name else 0.0
+
+    device_name = getattr(activity, "device_name", None)
+    device_name = str(device_name).strip() if device_name else ""
+    features["has_device_name"] = 1.0 if device_name else 0.0
+    for i in range(DEVICE_HASH_BUCKETS):
+        features[f"device_bucket_{i}"] = 0.0
+    if device_name:
+        features[f"device_bucket_{_device_bucket(device_name)}"] = 1.0
 
     return features
 
