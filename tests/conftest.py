@@ -64,6 +64,7 @@ class FakeActivity:
     athlete_count: int = 1
     gear_id: str | None = "b111"
     description: str | None = None
+    name: str | None = "Morning Ride"
 
 
 ROAD = FakeGear(id="b111", name="Canyon Endurace", primary=True, distance=42_000_000)
@@ -199,16 +200,28 @@ class FakeGateway:
         return self.by_id[int(activity_id)]
 
     def update_activity(
-        self, activity_id: int, *, gear_id: str | None = None, description: str | None = None
+        self,
+        activity_id: int,
+        *,
+        gear_id: str | None = None,
+        description: str | None = None,
+        name: str | None = None,
     ) -> None:
         self.updates.append(
-            {"activity_id": activity_id, "gear_id": gear_id, "description": description}
+            {
+                "activity_id": activity_id,
+                "gear_id": gear_id,
+                "description": description,
+                "name": name,
+            }
         )
         activity = self.by_id[int(activity_id)]
         if gear_id is not None:
             activity.gear_id = gear_id
         if description is not None:
             activity.description = description
+        if name is not None:
+            activity.name = name
 
 
 @pytest.fixture

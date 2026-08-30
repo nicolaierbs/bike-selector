@@ -27,7 +27,7 @@ FastAPI  ──ack immediately──▶ BackgroundTask
                                    ├─ ensure model  ──▶ cached in /tmp, else
                                    │                    train on ride history
                                    ├─ extract ~44 features → predict_proba
-                                   └─ PUT gear_id + description
+                                   └─ PUT gear_id + description + title
 ```
 
 **No database.** Your refresh token lives in an environment variable and the
@@ -195,9 +195,33 @@ Everything is environment variables; see `.env.example` for the full list.
 | `RECENCY_HALF_LIFE_DAYS` | `365` | How fast old rides lose influence |
 | `MODEL_TTL_HOURS` | `24` | Retrain when the cache is older than this |
 | `MAX_PROBABILITIES_SHOWN` | `3` | Bikes listed in the description |
+| `RENAME_TITLE` | `true` | Replace Strava's generic default title |
+| `OVERWRITE_EXISTING_TITLE` | `false` | Rename even a title the rider typed themselves |
+| `TITLE_STYLE` | `any` | `epic` / `funny` / `historical` / `random` / `puns` / `any` |
 
 Want it to suggest rather than decide? Set `MIN_CONFIDENCE=0.75` and
 `OVERWRITE_EXISTING_GEAR=false`.
+
+### Titles
+
+Strava names an upload "Morning Ride" ("Morgenausfahrt" on a German-locale
+account), "Lunch Ride", "Evening Ride" and so on whenever nobody bothers to
+type anything else. `bike_selector/titles.py` only ever replaces one of those
+defaults (never a title you actually wrote, unless
+`OVERWRITE_EXISTING_TITLE=true` or you pass `--force`) with a German title
+from one of five flavours:
+
+| Style | Example |
+| --- | --- |
+| `historical` | Hannibals 812 m Alpenüberquerung |
+| `funny` | Rettet meine Beine bei km 63 |
+| `epic` | Die große 41 km Expedition |
+| `random` | Gummiente auf Erkundungstour |
+| `puns` | Volle Kette voraus |
+
+The choice of flavour and template is seeded by the activity id, so
+reprocessing the same ride (a retry, a dry run, a rerun of `backfill`) always
+proposes the same title instead of re-rolling the dice.
 
 ---
 

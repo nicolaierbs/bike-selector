@@ -14,6 +14,7 @@ from .config import Settings, get_settings
 from .features import gear_id_of, is_bike_activity
 from .model import BikeClassifier, InsufficientData, Prediction
 from .strava import StravaGateway, sport_type_of
+from .titles import generate_title, is_default_title
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class Outcome:
     chosen_gear_id: str | None = None
     chosen_bike: str | None = None
     probabilities: list[dict[str, Any]] | None = None
+    new_title: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if v is not None}
@@ -136,6 +138,23 @@ class BikeSelectorService:
         marker = self.settings.description_marker
         return bool(marker) and marker in (description or "")
 
+    # ------------------------------------------------------------------ title
+
+    def build_title(
+        self, activity: Any, prediction: Prediction, *, force: bool = False
+    ) -> str | None:
+        """An epic/funny/historical/random title, unless the rider named it themselves."""
+        settings = self.settings
+        if not settings.rename_title:
+            return None
+        current = getattr(activity, "name", None)
+        if not (force or settings.overwrite_existing_title or is_default_title(current)):
+            return None
+        candidate = generate_title(activity, prediction, style=settings.title_style)
+        if not candidate or candidate == (current or "").strip():
+            return None
+        return candidate
+
     # -------------------------------------------------------------- pipeline
 
     def process_activity(
@@ -194,25 +213,31 @@ class BikeSelectorService:
         if new_description is not None and new_description == (description or "").strip():
             new_description = None
 
+        new_title = self.build_title(activity, best, force=force)
+
         if dry_run:
+            detail = "would set " + best.name if gear_to_set else "would only annotate"
+            if new_title:
+                detail += f"; would retitle to “{new_title}”"
             return Outcome(
                 activity_id,
                 "dry-run",
-                f"would set {best.name}" if gear_to_set else "would only annotate",
+                detail,
                 sport,
                 best.gear_id,
                 best.name,
                 probabilities,
+                new_title,
             )
 
-        if gear_to_set is None and new_description is None:
+        if gear_to_set is None and new_description is None and new_title is None:
             return Outcome(
                 activity_id, "unchanged", "prediction matches what is already there", sport,
                 best.gear_id, best.name, probabilities,
             )
 
         self.gateway.update_activity(
-            activity_id, gear_id=gear_to_set, description=new_description
+            activity_id, gear_id=gear_to_set, description=new_description, name=new_title
         )
         if gear_to_set:
             self._remember_auto_labelled(activity_id)
@@ -224,8 +249,10 @@ class BikeSelectorService:
             if not confident
             else "annotated only"
         )
+        if new_title:
+            detail += f"; retitled to “{new_title}”"
         return Outcome(
-            activity_id, "updated", detail, sport, best.gear_id, best.name, probabilities
+            activity_id, "updated", detail, sport, best.gear_id, best.name, probabilities, new_title
         )
 
     def handle_event(self, event: dict[str, Any]) -> Outcome | None:

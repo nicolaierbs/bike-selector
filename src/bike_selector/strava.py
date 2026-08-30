@@ -178,12 +178,15 @@ class StravaGateway:
         *,
         gear_id: str | None = None,
         description: str | None = None,
+        name: str | None = None,
     ) -> Any:
         kwargs: dict[str, Any] = {}
         if gear_id is not None:
             kwargs["gear_id"] = gear_id
         if description is not None:
             kwargs["description"] = description
+        if name is not None:
+            kwargs["name"] = name
         if not kwargs:
             return None
         log.info("Updating activity %s: %s", activity_id, ", ".join(sorted(kwargs)))

@@ -66,6 +66,64 @@ def test_probability_count_is_configurable(service):
     assert "Rose Commuter" not in line
 
 
+# ---------------------------------------------------------------------- title
+
+
+def test_default_strava_title_gets_renamed(service):
+    activity = FakeActivity(id=580, gear_id=None, name="Morning Ride")
+    result = service.build_title(activity, PREDICTIONS[0])
+    assert result is not None
+    assert result != "Morning Ride"
+
+
+def test_custom_title_is_left_alone(service):
+    activity = FakeActivity(id=581, gear_id=None, name="Sunday loop with the club")
+    assert service.build_title(activity, PREDICTIONS[0]) is None
+
+
+def test_custom_title_is_overwritten_when_forced(service):
+    activity = FakeActivity(id=582, gear_id=None, name="Sunday loop with the club")
+    assert service.build_title(activity, PREDICTIONS[0], force=True) is not None
+
+
+def test_custom_title_is_overwritten_when_configured(service):
+    service.settings.overwrite_existing_title = True
+    activity = FakeActivity(id=583, gear_id=None, name="Sunday loop with the club")
+    assert service.build_title(activity, PREDICTIONS[0]) is not None
+
+
+def test_title_rename_disabled_by_setting(service):
+    service.settings.rename_title = False
+    activity = FakeActivity(id=584, gear_id=None, name="Morning Ride")
+    assert service.build_title(activity, PREDICTIONS[0]) is None
+
+
+def test_processing_renames_the_default_title(service, gateway):
+    gateway.by_id[585] = FakeActivity(id=585, gear_id=None, name="Morning Ride")
+    outcome = service.process_activity(585)
+    assert outcome.status == "updated"
+    assert outcome.new_title
+    assert gateway.updates[0]["name"] == outcome.new_title
+    assert gateway.by_id[585].name == outcome.new_title
+
+
+def test_processing_leaves_a_custom_title_alone(service, gateway):
+    gateway.by_id[586] = FakeActivity(id=586, gear_id=None, name="Race day with Sam")
+    outcome = service.process_activity(586)
+    assert outcome.new_title is None
+    assert gateway.updates[0]["name"] is None
+    assert gateway.by_id[586].name == "Race day with Sam"
+
+
+def test_dry_run_reports_the_title_without_writing(service, gateway):
+    gateway.by_id[587] = FakeActivity(id=587, gear_id=None, name="Morning Ride")
+    outcome = service.process_activity(587, dry_run=True)
+    assert outcome.status == "dry-run"
+    assert outcome.new_title
+    assert gateway.updates == []
+    assert gateway.by_id[587].name == "Morning Ride"
+
+
 # ----------------------------------------------------------------- pipeline
 
 

@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     max_probabilities_shown: int = 3
     info_url: str = "https://www.erbs.eu/bikeselector/"
 
+    # --- Title ---
+    rename_title: bool = True
+    #: Replace even a title the rider typed themselves, not just Strava's
+    #: generic "Morning Ride" default.
+    overwrite_existing_title: bool = False
+    #: One of "epic", "funny", "historical", "random", "puns", or "any" to let
+    #: each ride pick its own flavour.
+    title_style: str = "any"
+
     # --- Model ---
     training_activity_limit: int = 1000
     model_ttl_hours: float = 24.0
