@@ -23,7 +23,15 @@ import numpy as np
 from xgboost import XGBClassifier
 
 from .config import Settings, get_settings
-from .features import FEATURE_NAMES, extract, gear_id_of, is_bike_activity, start_datetime, to_vector
+from .features import (
+    BASE_FEATURES,
+    FEATURE_NAMES,
+    extract,
+    gear_id_of,
+    is_bike_activity,
+    start_datetime,
+    to_vector,
+)
 
 log = logging.getLogger(__name__)
 
@@ -168,6 +176,9 @@ class BikeClassifier:
         # Context for the "what bike were they on right before this one" feature.
         self.last_gear_id: str | None = None
         self.last_ride_at: datetime | None = None
+        #: Per-bike (mean, std) average speed in km/h, from training history —
+        #: used to tell a "relaxed" ride from a "brisk" one for that bike.
+        self.speed_baselines: dict[str, tuple[float, float]] = {}
 
     # ------------------------------------------------------------- properties
 
@@ -184,6 +195,10 @@ class BikeClassifier:
 
     def name_for(self, gear_id: str) -> str:
         return self.bike_names.get(gear_id, gear_id)
+
+    def speed_baseline(self, gear_id: str) -> tuple[float, float] | None:
+        """This bike's own (mean, std) average speed in km/h, if it has history."""
+        return self.speed_baselines.get(gear_id)
 
     # ---------------------------------------------------------------- dataset
 
@@ -270,6 +285,25 @@ class BikeClassifier:
             extra[row, 2 + column if column is not None else 2 + len(self.labels)] = 1.0
         return np.hstack([base, extra])
 
+    def _speed_baselines(
+        self, matrix: np.ndarray, labels: list[str]
+    ) -> dict[str, tuple[float, float]]:
+        """Per-bike (mean, std) avg speed in km/h, from that bike's own rows.
+
+        Must run on the base feature matrix, before ``_augment_prev_gear``
+        appends columns after it.
+        """
+        idx = BASE_FEATURES.index("avg_speed_kmh")
+        column = matrix[:, idx]
+        stats: dict[str, tuple[float, float]] = {}
+        for gear in set(labels):
+            speeds = column[[label == gear for label in labels]]
+            speeds = speeds[~np.isnan(speeds)]
+            if speeds.size == 0:
+                continue
+            stats[gear] = (float(speeds.mean()), float(speeds.std()))
+        return stats
+
     def _days_since_last_ride(self, activity: Any) -> float:
         if self.last_ride_at is None:
             return math.nan
@@ -335,6 +369,7 @@ class BikeClassifier:
         index = {gear: i for i, gear in enumerate(self.labels)}
         y = np.array([index[label] for label in kept_labels], dtype=np.int32)
         weights = self._sample_weights(kept_stamps, y)
+        self.speed_baselines = self._speed_baselines(matrix, kept_labels)
         matrix = self._augment_prev_gear(matrix, kept_prev_gear, kept_prev_days)
         self.feature_names = FEATURE_NAMES + self._prev_gear_feature_names()
 
@@ -433,6 +468,7 @@ class BikeClassifier:
             "feature_names": list(self.feature_names),
             "last_gear_id": self.last_gear_id,
             "last_ride_at": self.last_ride_at,
+            "speed_baselines": self.speed_baselines,
         }
         tmp = path.with_suffix(".tmp")
         with tmp.open("wb") as handle:
@@ -470,6 +506,7 @@ class BikeClassifier:
         self.feature_names = stored_feature_names
         self.last_gear_id = payload.get("last_gear_id")
         self.last_ride_at = payload.get("last_ride_at")
+        self.speed_baselines = dict(payload.get("speed_baselines") or {})
 
         if self.age_hours > self.settings.model_ttl_hours:
             log.info("Cached model is %.1f h old; retraining.", self.age_hours)

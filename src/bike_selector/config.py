@@ -43,9 +43,14 @@ class Settings(BaseSettings):
     #: Replace even a title the rider typed themselves, not just Strava's
     #: generic "Morning Ride" default.
     overwrite_existing_title: bool = False
-    #: One of "epic", "funny", "historical", "random", "puns", or "any" to let
-    #: each ride pick its own flavour.
-    title_style: str = "any"
+    #: Maps a bike's Strava gear_id to the German category word used in the
+    #: title, e.g. {"b111": "Rennrad", "b222": "Gravel"}. A bike missing from
+    #: this map falls back to its own Strava name.
+    bike_types: dict[str, str] = Field(default_factory=dict)
+    #: How many of the ride's longest climb segments to name in the title.
+    climb_segments_in_title: int = 2
+    #: Minimum average grade (%) for a segment effort to count as a climb.
+    climb_min_grade: float = 3.0
 
     # --- Model ---
     training_activity_limit: int = 1000

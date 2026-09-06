@@ -197,7 +197,9 @@ Everything is environment variables; see `.env.example` for the full list.
 | `MAX_PROBABILITIES_SHOWN` | `3` | Bikes listed in the description |
 | `RENAME_TITLE` | `true` | Replace Strava's generic default title |
 | `OVERWRITE_EXISTING_TITLE` | `false` | Rename even a title the rider typed themselves |
-| `TITLE_STYLE` | `any` | `epic` / `funny` / `historical` / `random` / `puns` / `any` |
+| `BIKE_TYPES` | `{}` | JSON map of gear_id → German bike category for the title |
+| `CLIMB_SEGMENTS_IN_TITLE` | `2` | How many of the ride's longest climbs to name |
+| `CLIMB_MIN_GRADE` | `3.0` | Minimum average grade (%) to count as a climb |
 
 Want it to suggest rather than decide? Set `MIN_CONFIDENCE=0.75` and
 `OVERWRITE_EXISTING_GEAR=false`.
@@ -209,17 +211,21 @@ account), "Lunch Ride", "Evening Ride" and so on whenever nobody bothers to
 type anything else. `bike_selector/titles.py` only ever replaces one of those
 defaults (never a title you actually wrote, unless
 `OVERWRITE_EXISTING_TITLE=true` or you pass `--force`) with a German title
-from one of five flavours:
+like:
 
-| Style | Example |
-| --- | --- |
-| `historical` | Hannibals 812 m Alpenüberquerung |
-| `funny` | Rettet meine Beine bei km 63 |
-| `epic` | Die große 41 km Expedition |
-| `random` | Gummiente auf Erkundungstour |
-| `puns` | Volle Kette voraus |
+- "Entspannte Rennrad-Tour"
+- "Schnelle Gravel-Tour über Alpe-Anstieg und Bergstraße"
 
-The choice of flavour and template is seeded by the activity id, so
+The adjective ("Entspannte", "Schnelle", ...) is picked by comparing the
+ride's average speed to *that bike's own* training history — notably slower
+than usual for that bike gets a relaxed word, notably faster gets a brisk
+one, otherwise a neutral compliment. The bike category ("Rennrad", "Gravel",
+...) comes from `BIKE_TYPES`, keyed by gear_id; a bike missing from that map
+falls back to its own Strava name. If the ride had any segments graded at
+least `CLIMB_MIN_GRADE`, the longest `CLIMB_SEGMENTS_IN_TITLE` of them are
+named after the "über".
+
+The adjective and its ordering are seeded by the activity id, so
 reprocessing the same ride (a retry, a dry run, a rerun of `backfill`) always
 proposes the same title instead of re-rolling the dice.
 

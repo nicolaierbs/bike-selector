@@ -41,6 +41,19 @@ def test_probabilities_sum_to_one_and_are_sorted(trained):
     assert predictions == sorted(predictions, key=lambda p: -p.probability)
 
 
+def test_speed_baseline_is_per_bike(trained):
+    road_mean, road_std = trained.speed_baseline(ROAD.id)
+    gravel_mean, gravel_std = trained.speed_baseline(GRAVEL.id)
+    # Synthetic history: road averages ~28.8 km/h, gravel ~20.2 km/h.
+    assert road_mean > gravel_mean
+    assert road_std > 0
+    assert gravel_std > 0
+
+
+def test_speed_baseline_is_none_for_an_unknown_bike(trained):
+    assert trained.speed_baseline("no-such-gear") is None
+
+
 def test_recognises_a_commute(trained):
     commute = FakeActivity(
         id=1,

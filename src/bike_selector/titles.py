@@ -6,11 +6,12 @@ bothers to type one. Those are the only titles we ever touch — see
 :func:`is_default_title` — so a name someone actually chose is never clobbered
 unless the caller forces it.
 
-The replacement is German, picked from five flavours (epic / funny /
-historical / random / puns) and rendered against a handful of ride stats.
-Selection is seeded by the activity id, so re-processing the same ride (a
-retry, a dry run, a rerun of `backfill`) always proposes the same title rather
-than re-rolling the dice.
+The replacement is German: an adjective (how the ride felt, relative to this
+bike's own history) plus the bike's category, e.g. "Entspannte Rennrad-Tour"
+or "Schnelle Gravel-Tour" — with the ride's longest climbs named after it, if
+it had any. The adjective pool is picked deterministically from the activity
+id, so re-processing the same ride (a retry, a dry run, a rerun of
+`backfill`) always proposes the same title rather than re-rolling the dice.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import random
 import re
 from typing import Any
 
-from .features import _num, start_datetime
+from .features import extract
 from .model import Prediction
 
 #: Strava's own auto-generated names, English ("Morning Ride", "Lunch Ride")
@@ -36,138 +37,86 @@ _DEFAULT_TITLE_RE = re.compile(
 #: Cap so a title stays a title, not a paragraph.
 MAX_TITLE_LENGTH = 80
 
-TITLE_STYLES: tuple[str, ...] = ("epic", "funny", "historical", "random", "puns")
+#: Fallback bike-category word when none is configured for the gear.
+DEFAULT_BIKE_TYPE = "Fahrrad"
 
-# --------------------------------------------------------------- templates
+# --------------------------------------------------------------- adjectives
 #
-# All in German — the app writes back to a German Strava account.
+# Which pool a ride draws from depends on how its average speed compares to
+# *this bike's* own training history (see BikeClassifier.speed_baseline) —
+# notably slower than usual is "relaxed", notably faster is "brisk", anything
+# in between (or a bike with no history yet) is a neutral compliment.
 
-EPIC: tuple[str, ...] = (
-    "Die {distance} km Odyssee",
-    "Eroberung des {elevation} m Gipfels",
-    "Legende des {bike} am {weekday}",
-    "Aufstieg des eisernen {bike}",
-    "Der {month}-Kreuzzug",
-    "Sage der tausend Watt",
-    "Chroniken des {hour_word}-Kriegers",
-    "Die große {distance} km Expedition",
-    "Imperium des Asphalts",
-    "Das unaufhaltsame {bike}",
-    "Herrschaft des {weekday}-Pelotons",
-    "Himmelfahrt: {elevation} Höhenmeter näher an den Göttern",
-)
+RELAXED: tuple[str, ...] = ("Entspannte", "Gemütliche", "Ruhige", "Lockere", "Beschauliche")
+BRISK: tuple[str, ...] = ("Schnelle", "Flotte", "Rasante", "Sportliche", "Zügige")
+NEUTRAL: tuple[str, ...] = ("Schöne", "Klassische", "Herrliche", "Feine", "Kleine")
 
-FUNNY: tuple[str, ...] = (
-    "Rettet meine Beine bei km {distance}",
-    "Ich bereue alles ({distance} km Geschichte)",
-    "Der Snack war die eigentliche Leistung",
-    "{weekday}-Leiden, präsentiert vom {bike}",
-    "{bike} gegen die Schwerkraft: Runde 2",
-    "Nur ein kleiner {distance} km Umweg vom Sofa",
-    "Angetrieben von Kaffee und schlechten Entscheidungen",
-    "Mein Sattel hat Beschwerde eingelegt",
-    "Auf der Jagd nach Strava-Segmenten, gefangen: keins",
-    "Die {hour_word}-Ausfahrt, die niemand wollte",
-    "{elevation} Höhenmeter der Sinnfrage",
-    "Definitiv nicht zu spät zum {hour_word}-Kaffee",
-)
-
-HISTORICAL: tuple[str, ...] = (
-    "Hannibals {elevation} m Alpenüberquerung",
-    "Paul Reveres {hour_word}-Ritt, nachgestellt",
-    "Die Attacke der {bike}-Brigade",
-    "Cäsars {distance} km Rubikon",
-    "Das Trojanische {bike}",
-    "Marco Polos {distance} km Seidenstraßen-Umweg",
-    "Der {weekday}-Tee von Boston",
-    "Magellans Weltumrundung (Lokale Ausgabe, {distance} km)",
-    "Napoleons Rückzug aus dem {month}",
-    "Der Plan B der Gebrüder Wright",
-    "Spartacus führt die {weekday}-Ausreißergruppe an",
-    "Das {bike}, Excalibur des {month}",
-)
-
-RANDOM: tuple[str, ...] = (
-    "Bermuda-Dreieck, aber als Radweg",
-    "Gummiente auf Erkundungstour",
-    "Ausfahrt des Jahrhunderts (vermutlich)",
-    "Schrödingers Sprint",
-    "Das {bike} betritt ein Wurmloch",
-    "{distance} km bis zum Sinn des Lebens",
-    "Verfolgungsjagd auf ein Eichhörnchen",
-    "Die große {month}-Pizza-Jagd",
-    "Steppenläufer-Sprint",
-    "Ein wildes {bike} erscheint",
-    "Irgendwo zwischen {weekday} und Narnia",
-    "Koordinaten unbekannt, Stimmung einwandfrei",
-)
-
-PUNS: tuple[str, ...] = (
-    "Volle Kette voraus",
-    "Kettenreaktion pur",
-    "Sattelfest nach {distance} km",
-    "Alles im grünen Radl-Bereich",
-    "Speichenkalypse Now",
-    "Radikal unterwegs mit dem {bike}",
-    "Nabenschau am {weekday}",
-    "Der Lenker lügt nie",
-    "Reifen, Rost und Rekorde",
-    "Kette rechts, Ausrede links",
-    "Sattelschlepper im {month}-Einsatz",
-    "Zwei Räder, ein {bike}, kein Plan",
-    "Radler-Ehre auf {elevation} Höhenmetern",
-    "Pedal zum Metall, {hour_word}-Ausgabe",
-    "Ganz schön abgefahren: {distance} km",
-)
-
-_POOLS: dict[str, tuple[str, ...]] = {
-    "epic": EPIC,
-    "funny": FUNNY,
-    "historical": HISTORICAL,
-    "random": RANDOM,
-    "puns": PUNS,
-}
-
-_HOUR_WORDS: tuple[tuple[int, str], ...] = (
-    (6, "Nacht"),
-    (11, "Morgen"),
-    (14, "Mittag"),
-    (18, "Nachmittag"),
-    (22, "Abend"),
-    (24, "Nacht"),
-)
-
-_WEEKDAYS: tuple[str, ...] = (
-    "Montag",
-    "Dienstag",
-    "Mittwoch",
-    "Donnerstag",
-    "Freitag",
-    "Samstag",
-    "Sonntag",
-)
-
-_MONTHS: tuple[str, ...] = (
-    "Januar",
-    "Februar",
-    "März",
-    "April",
-    "Mai",
-    "Juni",
-    "Juli",
-    "August",
-    "September",
-    "Oktober",
-    "November",
-    "Dezember",
-)
+#: How many standard deviations off this bike's average speed counts as
+#: "relaxed" or "brisk" rather than just an ordinary ride for it.
+_SPEED_Z_THRESHOLD = 0.5
+#: Floor on the standard deviation so a bike with almost no spread in its
+#: history (or only one ride so far) doesn't get called "brisk" or "relaxed"
+#: over a fraction of a km/h.
+_MIN_SPEED_STD_KMH = 1.5
 
 
-def _hour_word(hour: int) -> str:
-    for ceiling, word in _HOUR_WORDS:
-        if hour < ceiling:
-            return word
-    return "Nacht"  # pragma: no cover - unreachable, hour is always < 24
+def _adjective(
+    rng: random.Random, avg_speed_kmh: float, speed_baseline: tuple[float, float] | None
+) -> str:
+    if speed_baseline is None or avg_speed_kmh != avg_speed_kmh:  # NaN != NaN
+        return rng.choice(NEUTRAL)
+    mean, std = speed_baseline
+    if mean != mean:
+        return rng.choice(NEUTRAL)
+    spread = max(std, _MIN_SPEED_STD_KMH)
+    z = (avg_speed_kmh - mean) / spread
+    if z <= -_SPEED_Z_THRESHOLD:
+        return rng.choice(RELAXED)
+    if z >= _SPEED_Z_THRESHOLD:
+        return rng.choice(BRISK)
+    return rng.choice(NEUTRAL)
+
+
+# ------------------------------------------------------------------ climbs
+
+
+def _climb_segments(activity: Any, *, limit: int, min_grade: float) -> list[str]:
+    """Names of the ride's longest climbs, longest first.
+
+    A "climb" is a segment effort whose segment averages at least
+    ``min_grade`` percent — Strava's own ``climb_category`` is not used
+    because it is often 0 ("uncategorized") for perfectly real climbs.
+    Length comes from the effort itself (how much of the segment was
+    actually ridden), falling back to the segment's own length.
+    """
+    efforts = getattr(activity, "segment_efforts", None) or []
+    seen: set[str] = set()
+    climbs: list[tuple[float, str]] = []
+    for effort in efforts:
+        segment = getattr(effort, "segment", None)
+        grade = getattr(segment, "average_grade", None) if segment is not None else None
+        if grade is None or grade < min_grade:
+            continue
+        name = str(getattr(effort, "name", None) or getattr(segment, "name", None) or "").strip()
+        if not name or name in seen:
+            continue
+        length = getattr(effort, "distance", None)
+        if length is None and segment is not None:
+            length = getattr(segment, "distance", None)
+        if length is None:
+            continue
+        seen.add(name)
+        climbs.append((float(length), name))
+    climbs.sort(key=lambda c: c[0], reverse=True)
+    return [name for _, name in climbs[:limit]]
+
+
+def _join_german(items: list[str]) -> str:
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return ", ".join(items[:-1]) + " und " + items[-1]
 
 
 def is_default_title(name: str | None) -> bool:
@@ -176,35 +125,32 @@ def is_default_title(name: str | None) -> bool:
     return not text or bool(_DEFAULT_TITLE_RE.match(text))
 
 
-def _context(activity: Any, prediction: Prediction | None) -> dict[str, str]:
-    started = start_datetime(activity)
-    distance_km = _num(getattr(activity, "distance", None)) / 1000.0
-    elevation_m = _num(getattr(activity, "total_elevation_gain", None))
-    return {
-        "bike": prediction.name if prediction else "Fahrrad",
-        "distance": f"{distance_km:.0f}" if distance_km == distance_km else "??",  # NaN != NaN
-        "elevation": f"{elevation_m:.0f}" if elevation_m == elevation_m else "??",
-        "weekday": _WEEKDAYS[started.weekday()] if started else "Irgendwann",
-        "month": _MONTHS[started.month - 1] if started else "Irgendwann",
-        "hour_word": _hour_word(started.hour) if started else "Tag",
-    }
-
-
 def generate_title(
     activity: Any,
     prediction: Prediction | None = None,
     *,
-    style: str = "any",
+    bike_type: str | None = None,
+    speed_baseline: tuple[float, float] | None = None,
+    climb_limit: int = 2,
+    climb_min_grade: float = 3.0,
     seed: int | None = None,
 ) -> str:
-    """Pick and render one title template.
+    """Build a title like "Entspannte Rennrad-Tour über Bergstraße".
 
-    ``style`` is one of :data:`TITLE_STYLES`, or ``"any"`` to let the RNG pick a
-    flavour too. ``seed`` defaults to the activity id so the result is stable
-    across reruns; pass an explicit value (or vary it) to get a fresh roll.
+    ``bike_type`` is the German category word to use (e.g. "Rennrad",
+    "Gravel"); it defaults to the predicted bike's own Strava name, or
+    :data:`DEFAULT_BIKE_TYPE` if there is no prediction either.
+    ``speed_baseline`` is this bike's own (mean, std) average speed in km/h
+    from training history, used to pick "relaxed" vs. "brisk" vs. neutral.
+    ``seed`` defaults to the activity id so the result is stable across
+    reruns; pass an explicit value (or vary it) to get a fresh roll.
     """
     rng = random.Random(seed if seed is not None else getattr(activity, "id", 0))
-    pool_name = style if style in _POOLS else rng.choice(TITLE_STYLES)
-    template = rng.choice(_POOLS[pool_name])
-    title = template.format(**_context(activity, prediction))
+    resolved_type = bike_type or (prediction.name if prediction else None) or DEFAULT_BIKE_TYPE
+    avg_speed_kmh = extract(activity)["avg_speed_kmh"]
+
+    title = f"{_adjective(rng, avg_speed_kmh, speed_baseline)} {resolved_type}-Tour"
+    climbs = _climb_segments(activity, limit=climb_limit, min_grade=climb_min_grade)
+    if climbs:
+        title += f" über {_join_german(climbs)}"
     return title[:MAX_TITLE_LENGTH].rstrip()

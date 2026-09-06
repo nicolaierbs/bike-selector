@@ -28,6 +28,20 @@ class FakeAthlete:
 
 
 @dataclass
+class FakeSegment:
+    name: str
+    distance: float = 1000.0
+    average_grade: float = 5.0
+
+
+@dataclass
+class FakeSegmentEffort:
+    name: str
+    distance: float = 1000.0
+    segment: FakeSegment | None = None
+
+
+@dataclass
 class FakeActivity:
     """Mimics the attribute surface of stravalib's SummaryActivity/DetailedActivity."""
 
@@ -65,6 +79,7 @@ class FakeActivity:
     gear_id: str | None = "b111"
     description: str | None = None
     name: str | None = "Morning Ride"
+    segment_efforts: list[Any] = field(default_factory=list)
 
 
 ROAD = FakeGear(id="b111", name="Canyon Endurace", primary=True, distance=42_000_000)

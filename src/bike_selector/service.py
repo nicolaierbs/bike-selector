@@ -150,7 +150,14 @@ class BikeSelectorService:
         current = getattr(activity, "name", None)
         if not (force or settings.overwrite_existing_title or is_default_title(current)):
             return None
-        candidate = generate_title(activity, prediction, style=settings.title_style)
+        candidate = generate_title(
+            activity,
+            prediction,
+            bike_type=settings.bike_types.get(prediction.gear_id),
+            speed_baseline=self.classifier.speed_baseline(prediction.gear_id),
+            climb_limit=settings.climb_segments_in_title,
+            climb_min_grade=settings.climb_min_grade,
+        )
         if not candidate or candidate == (current or "").strip():
             return None
         return candidate
