@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import threading
@@ -47,27 +46,63 @@ class BikeSelectorService:
         self.gateway = gateway or StravaGateway(self.settings)
         self.classifier = classifier or BikeClassifier(self.settings)
         self._train_lock = threading.Lock()
-        self._auto_labelled: set[int] = self._load_auto_labelled()
 
-    # ------------------------------------------------- self-labelled tracking
+    # ------------------------------------------------------ label trustworthiness
 
-    def _load_auto_labelled(self) -> set[int]:
-        path = self.settings.auto_labelled_path
-        if not path.exists():
+    def _app_guess(self, description: str | None, bike_names: dict[str, str]) -> str | None:
+        """The gear_id this app put in first place in a ride's description, if any."""
+        marker = self.settings.description_marker
+        if not marker or marker not in (description or ""):
+            return None
+        match = re.search(rf"^{self._RANK_MARKERS[0]} (.+?) — \d+%\s*$", description or "", re.M)
+        if match is None:
+            return None
+        guessed = match.group(1).strip()
+        return next(
+            (gear for gear, name in bike_names.items() if name.strip() == guessed), None
+        )
+
+    def untrusted_label_ids(
+        self, activities: list[Any], bike_names: dict[str, str]
+    ) -> set[int]:
+        """Recent rides whose bike is not (yet) the rider's own word.
+
+        Within the ``auto_label_grace_days`` window a ride's gear is either this
+        app's own guess or whatever Strava/the head unit defaulted to before the
+        webhook ran. Training on those feeds the model its own guesses back and
+        snowballs one bike (it did, badly). The only recent label we trust is a
+        rider's correction: the gear no longer matches the guess we wrote down.
+        Older rides are trusted, corrected or not — the rider had time to fix them.
+
+        Reads the guess from the ride's own description, which lives on Strava
+        and so survives restarts of the (ephemeral) host. Costs one API call per
+        ride in the window, as summary activities carry no description.
+        """
+        grace = self.settings.auto_label_grace_days
+        if grace <= 0:
             return set()
-        try:
-            return {int(x) for x in json.loads(path.read_text())}
-        except (OSError, ValueError, json.JSONDecodeError):  # pragma: no cover - defensive
-            return set()
-
-    def _remember_auto_labelled(self, activity_id: int) -> None:
-        self._auto_labelled.add(int(activity_id))
-        try:
-            self.settings.ensure_state_dir()
-            recent = sorted(self._auto_labelled)[-2000:]
-            self.settings.auto_labelled_path.write_text(json.dumps(recent))
-        except OSError as exc:  # pragma: no cover - defensive
-            log.warning("Could not persist auto-labelled ids: %s", exc)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=grace)
+        untrusted: set[int] = set()
+        for summary in activities:
+            started = getattr(summary, "start_date", None)
+            if not isinstance(started, datetime):
+                continue
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            if started < cutoff or not is_bike_activity(summary):
+                continue
+            gear = gear_id_of(summary)
+            if not gear:
+                continue
+            try:
+                description = getattr(self.gateway.activity(int(summary.id)), "description", None)
+            except Exception as exc:  # pragma: no cover - network hiccup
+                log.warning("Could not read activity %s: %s", summary.id, exc)
+                description = None
+            guess = self._app_guess(description, bike_names)
+            if guess is None or guess == gear:
+                untrusted.add(int(summary.id))
+        return untrusted
 
     # ---------------------------------------------------------------- model
 
@@ -82,10 +117,11 @@ class BikeSelectorService:
 
             log.info("Training bike classifier from Strava history…")
             activities = self.gateway.recent_activities()
+            bike_names = self.gateway.bike_names()
             report = self.classifier.train(
                 activities,
-                bike_names=self.gateway.bike_names(),
-                exclude_ids=self._auto_labelled,
+                bike_names=bike_names,
+                exclude_ids=self.untrusted_label_ids(activities, bike_names),
             )
             log.info("%s", report.summary())
             try:
@@ -246,8 +282,6 @@ class BikeSelectorService:
         self.gateway.update_activity(
             activity_id, gear_id=gear_to_set, description=new_description, name=new_title
         )
-        if gear_to_set:
-            self._remember_auto_labelled(activity_id)
 
         detail = (
             f"set {best.name} ({best.probability:.0%})"

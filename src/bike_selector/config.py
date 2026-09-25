@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     model_ttl_hours: float = 24.0
     recency_half_life_days: float = 365.0
     min_rides_per_bike: int = 5
+    #: Rides younger than this only count for training when the rider changed
+    #: the bike this app picked; older rides count as they are. 0 trusts all.
+    auto_label_grace_days: float = 3.0
 
     # --- Runtime ---
     state_dir: Path = Path("/tmp/bike-selector")
@@ -84,10 +87,6 @@ class Settings(BaseSettings):
     @property
     def token_path(self) -> Path:
         return self.state_dir / "token.json"
-
-    @property
-    def auto_labelled_path(self) -> Path:
-        return self.state_dir / "auto_labelled.json"
 
     def ensure_state_dir(self) -> Path:
         self.state_dir.mkdir(parents=True, exist_ok=True)

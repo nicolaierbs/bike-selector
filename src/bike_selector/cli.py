@@ -130,8 +130,13 @@ def train(
     classifier = BikeClassifier(settings)
     activities = gateway.recent_activities(limit=limit or None)
     _echo(f"Fetched {len(activities)} activities.")
+    bike_names = gateway.bike_names()
+    service = BikeSelectorService(gateway=gateway, classifier=classifier, settings=settings)
+    untrusted = service.untrusted_label_ids(activities, bike_names)
+    if untrusted:
+        _echo(f"Ignoring {len(untrusted)} recent ride(s) whose bike is still this app's guess.")
     try:
-        report = classifier.train(activities, bike_names=gateway.bike_names())
+        report = classifier.train(activities, bike_names=bike_names, exclude_ids=untrusted)
     except InsufficientData as exc:
         _echo(f"Cannot train: {exc}", err=True)
         raise typer.Exit(1) from exc

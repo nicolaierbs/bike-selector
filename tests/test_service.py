@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from bike_selector.model import BikeClassifier, Prediction
@@ -228,11 +230,34 @@ def test_dry_run_writes_nothing(service, gateway):
     assert gateway.updates == []
 
 
-def test_auto_assigned_ids_are_remembered_for_future_training(service, gateway):
-    gateway.by_id[565] = FakeActivity(id=565, gear_id=None)
-    service.process_activity(565)
-    assert 565 in service._auto_labelled
-    assert service.settings.auto_labelled_path.exists()
+def _recent(activity_id: int, gear_id: str | None, description: str | None) -> FakeActivity:
+    return FakeActivity(
+        id=activity_id,
+        gear_id=gear_id,
+        description=description,
+        start_date=datetime.now(timezone.utc) - timedelta(hours=6),
+    )
+
+
+def test_recent_app_guess_is_not_trusted_for_training(service, gateway):
+    guessed = service.build_description(None, PREDICTIONS)  # guessed ROAD
+    rides = [
+        _recent(700, ROAD.id, guessed),  # still our guess: untrusted
+        _recent(701, GRAVEL.id, guessed),  # rider corrected it: trusted
+        _recent(702, ROAD.id, None),  # not processed yet: untrusted
+        _recent(703, None, None),  # no bike, never a label anyway
+    ]
+    for ride in rides:
+        gateway.by_id[ride.id] = ride
+    untrusted = service.untrusted_label_ids(rides + gateway.activities, gateway.bike_names())
+    assert untrusted == {700, 702}
+
+
+def test_grace_window_can_be_disabled(service, gateway):
+    service.settings.auto_label_grace_days = 0
+    ride = _recent(704, ROAD.id, None)
+    gateway.by_id[704] = ride
+    assert service.untrusted_label_ids([ride], gateway.bike_names()) == set()
 
 
 # ------------------------------------------------------------------- events
